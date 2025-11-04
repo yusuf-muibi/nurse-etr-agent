@@ -4,13 +4,11 @@ from app.database import get_db
 from app.services.ai_service import AIAgent
 from app.services.patient_service import PatientService
 from app.models.schemas import TelexMessage
-from datetime import datetime
+from datetime import datetime, timedelta
 import dateparser
-
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
-
-from pydantic import BaseModel
 
 class MessageRequest(BaseModel):
     message: str
@@ -25,13 +23,24 @@ async def process_message(data: MessageRequest, db: Session = Depends(get_db)):
         message = data.message.strip()
         user_id = data.user_id
         
+        # Log incoming request
+        print(f"📨 Received message from {user_id}: {message}")
+        
         if not message:
-            return {"response": "Please provide a message."}
+            return {
+                "response": "Please provide a message.",
+                "text": "Please provide a message.",
+                "message": "Please provide a message.",
+                "content": "Please provide a message."
+            }
         
         # Parse intent using AI
         parsed = AIAgent.parse_intent(message)
         intent = parsed.get('intent')
         data_dict = parsed.get('data', {})
+        
+        print(f"🎯 Detected intent: {intent}")
+        print(f"📋 Extracted data: {data_dict}")
         
         response_text = ""
         success = False
@@ -85,9 +94,6 @@ async def process_message(data: MessageRequest, db: Session = Depends(get_db)):
         
         elif intent == "schedule_appointment":
             # Parse the time string into datetime
-            from datetime import datetime, timedelta
-            import dateparser
-            
             time_str = data_dict.get('time', '')
             appointment_dt = dateparser.parse(time_str)
             
@@ -114,19 +120,35 @@ async def process_message(data: MessageRequest, db: Session = Depends(get_db)):
         # Generate natural language response
         response_text = AIAgent.generate_response(intent, success, response_data)
         
+        print(f"✅ Response generated: {response_text[:100]}...")
+        
+        # Return in multiple formats for compatibility with different systems
         return {
-            "response": response_text,
+            "response": response_text,      # Standard field
+            "text": response_text,          # Alternative field name
+            "message": response_text,       # Alternative field name
+            "content": response_text,       # Alternative field name
             "intent": intent,
-            "success": success
+            "success": success,
+            "data": response_data,          # Structured data
+            "user_id": user_id,            # Echo back user info
+            "timestamp": datetime.utcnow().isoformat()
         }
     
     except Exception as e:
-        print(f"Error processing message: {e}")
+        error_msg = "Sorry, I encountered an error. Please try again."
+        print(f"❌ Error processing message: {e}")
         import traceback
         traceback.print_exc()
+        
         return {
-            "response": "Sorry, I encountered an error. Please try again.",
-            "error": str(e)
+            "response": error_msg,
+            "text": error_msg,
+            "message": error_msg,
+            "content": error_msg,
+            "error": str(e),
+            "success": False,
+            "timestamp": datetime.utcnow().isoformat()
         }
 
 @router.get("/health")
