@@ -52,54 +52,84 @@ app.include_router(agent.router)
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint - GET"""
     return {
         "message": "Welcome to Nurse ETR Assistant API",
         "status": "operational",
-        "docs": "/docs"
+        "docs": "/docs",
+        "endpoints": {
+            "message": "/agent/message",
+            "health": "/agent/health"
+        }
     }
 
-
-#@app.post("/webhook/telex")
-#async def telex_webhook(request: Request):
+@app.post("/")
+async def root_post(request: Request):
     """
-    Webhook endpoint for Telex.im
-    Receives messages from Telex and processes them
+    Root endpoint - POST
+    Handles Telex messages sent to root URL
     """
     try:
         body = await request.json()
+        print(f"📨 Received POST to root: {body}")
         
-        # Extract message data from Telex webhook
-        event_type = body.get('event', '')
+        # Extract message from various possible field names
+        message_text = (
+            body.get('message') or 
+            body.get('text') or 
+            body.get('content') or 
+            body.get('data', {}).get('message', '') or
+            body.get('data', {}).get('text', '')
+        ).strip()
         
-        if event_type == 'message.created':
-            message_data = body.get('data', {})
-            message_text = message_data.get('text', '').strip()
-            user_id = message_data.get('user_id', '')
-            channel_id = message_data.get('channel_id', '')
-            
-            # Process message through agent
-            response = await agent.process_message(
-                Request(scope={
-                    'type': 'http',
-                    'method': 'POST',
-                    'headers': [],
-                    'query_string': b'',
-                }),
-                message=message_text,
-                user_id=user_id
-            )
-            
-            # Send response back to Telex
-            # TODO: Implement Telex response
-            
-            return {"status": "processed"}
+        user_id = (
+            body.get('user_id') or 
+            body.get('userId') or 
+            body.get('sender_id') or 
+            body.get('from') or
+            'telex_user'
+        )
         
-        return {"status": "ignored"}
+        if not message_text:
+            print(f"⚠️ No message found in body: {body}")
+            return {
+                "error": "No message found",
+                "received": body,
+                "response": "Please provide a message to process."
+            }
+        
+        print(f"📝 Processing: '{message_text}' from {user_id}")
+        
+        # Import required modules
+        from app.routers.agent import MessageRequest, process_message
+        from app.database import get_db
+        
+        # Create message request
+        message_request = MessageRequest(message=message_text, user_id=user_id)
+        
+        # Get database session
+        db = next(get_db())
+        
+        # Process the message
+        response = await process_message(message_request, db)
+        
+        print(f"✅ Responding with: {response}")
+        
+        return response
     
     except Exception as e:
-        print(f"Webhook error: {e}")
-        return {"error": str(e)}
+        print(f"❌ Error in root POST handler: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        error_msg = "Sorry, I encountered an error processing your request."
+        return {
+            "response": error_msg,
+            "text": error_msg,
+            "message": error_msg,
+            "content": error_msg,
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn
